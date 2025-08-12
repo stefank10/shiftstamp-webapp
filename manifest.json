@@ -1,0 +1,16 @@
+{
+  "name": "ShiftStamp",
+  "short_name": "ShiftStamp",
+  "description": "Log your research assistant shifts easily",
+  "start_url": "/index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4CAF50",
+  "icons": [
+    {
+      "src": "icons/shiftstamp-icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}

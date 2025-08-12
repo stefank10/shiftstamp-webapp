@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>ShiftStamp</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="icons/shiftstamp-icon.png">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>ShiftStamp</h1>
+        </header>
+        
+        <div class="buttons">
+            <button id="clockInBtn" onclick="clockIn()">Clock On</button>
+            <button id="clockOutBtn" onclick="clockOut()">Clock Off</button>
+        </div>
+        
+        <div id="totals" class="totals">
+            <p>Today's Total: <span id="todayTotal">00:00</span></p>
+            <p>This Week's Total: <span id="weekTotal">00:00</span></p>
+            <p>Month to Date Total: <span id="monthTotal">00:00</span></p>
+        </div>
+        
+        <div class="shift-history">
+            <h2>Shift History</h2>
+            <ul id="shiftHistoryList">
+                <!-- Shift list will be dynamically generated here -->
+            </ul>
+        </div>
+        
+        <div class="actions">
+            <button onclick="exportCSV()">Export CSV</button>
+            <button onclick="importCSV()">Import CSV</button>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+    <script src="service-worker.js"></script>
+</body>
+</html>
