@@ -1,21 +1,22 @@
-self.addEventListener('install', (event) => {
-    event.waitUntil(
-        caches.open('shiftstamp-cache').then((cache) => {
-            return cache.addAll([
-                '/',
-                '/index.html',
-                '/style.css',
-                '/app.js',
-                '/icons/shiftstamp-icon.png',
-            ]);
-        })
-    );
+const CACHE = 'shiftstamp-v2';
+const ASSETS = ['/', '/index.html', '/style.css', '/app.js', '/manifest.json', '/icon.svg'];
+
+self.addEventListener('install', e => {
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
+  self.skipWaiting();
 });
 
-self.addEventListener('fetch', (event) => {
-    event.respondWith(
-        caches.match(event.request).then((cachedResponse) => {
-            return cachedResponse || fetch(event.request);
-        })
-    );
+self.addEventListener('activate', e => {
+  e.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+    )
+  );
+  self.clients.claim();
+});
+
+self.addEventListener('fetch', e => {
+  e.respondWith(
+    caches.match(e.request).then(cached => cached || fetch(e.request))
+  );
 });

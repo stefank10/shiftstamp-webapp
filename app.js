@@ -1,162 +1,271 @@
-// Store shifts in localStorage
-let shifts = JSON.parse(localStorage.getItem('shifts')) || [];
-let currentShift = null;
+// ── State ─────────────────────────────────────────────────────────────────────
 
-document.addEventListener('DOMContentLoaded', () => {
-    loadShifts();
-    updateTotals();
-    updateButtons();
-});
+let shifts = [];
+let activeShiftId = null;
+let liveTimerInterval = null;
+
+function loadState() {
+  try { shifts = JSON.parse(localStorage.getItem('shifts')) || []; }
+  catch { shifts = []; }
+  activeShiftId = localStorage.getItem('activeShiftId') || null;
+}
+
+function saveState() {
+  localStorage.setItem('shifts', JSON.stringify(shifts));
+  localStorage.setItem('activeShiftId', activeShiftId || '');
+}
+
+// ── Clock actions ─────────────────────────────────────────────────────────────
 
 function clockIn() {
-    if (currentShift) {
-        alert('Already clocked on. Clock off first.');
-        return;
-    }
-    
-    const shift = {
-        id: Date.now(),
-        startDate: new Date(),
-        endDate: null,
-        notes: ''
-    };
-
-    shifts.push(shift);
-    currentShift = shift;
-
-    saveShifts();
-    loadShifts();
-    updateButtons();
-    updateTotals();
+  if (activeShiftId) return;
+  const shift = {
+    id: Date.now().toString(),
+    startDate: new Date().toISOString(),
+    endDate: null,
+    notes: ''
+  };
+  shifts.unshift(shift);
+  activeShiftId = shift.id;
+  saveState();
+  render();
+  startLiveTimer();
 }
 
 function clockOut() {
-    if (!currentShift) {
-        alert('No active shift to clock off.');
-        return;
-    }
-
-    currentShift.endDate = new Date();
-    currentShift = null;
-
-    saveShifts();
-    loadShifts();
-    updateButtons();
-    updateTotals();
+  if (!activeShiftId) return;
+  const shift = shifts.find(s => s.id === activeShiftId);
+  if (shift) shift.endDate = new Date().toISOString();
+  activeShiftId = null;
+  saveState();
+  stopLiveTimer();
+  render();
 }
 
-function loadShifts() {
-    const shiftHistoryList = document.getElementById('shiftHistoryList');
-    shiftHistoryList.innerHTML = '';
-    
-    shifts.forEach(shift => {
-        const li = document.createElement('li');
-        li.innerHTML = `
-            <span>${new Date(shift.startDate).toLocaleString()}</span>
-            <span>${shift.endDate ? new Date(shift.endDate).toLocaleString() : '—'}</span>
-            <span>${shift.endDate ? formatDuration(shift.startDate, shift.endDate) : '—'}</span>
-        `;
-        shiftHistoryList.appendChild(li);
-    });
+function deleteShift(id) {
+  if (!confirm('Delete this shift?')) return;
+  if (id === activeShiftId) {
+    activeShiftId = null;
+    stopLiveTimer();
+  }
+  shifts = shifts.filter(s => s.id !== id);
+  saveState();
+  render();
 }
 
-function saveShifts() {
-    localStorage.setItem('shifts', JSON.stringify(shifts));
+function updateNotes(id, notes) {
+  const shift = shifts.find(s => s.id === id);
+  if (shift) shift.notes = notes;
+  saveState();
 }
+
+// ── Time utilities ────────────────────────────────────────────────────────────
+
+function formatMs(ms) {
+  if (ms <= 0) return '00:00';
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function formatMsLong(ms) {
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function startOfDay(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function startOfWeek(d) {
+  const copy = new Date(d);
+  const day = copy.getDay();
+  copy.setDate(copy.getDate() - (day === 0 ? 6 : day - 1)); // Monday-based
+  return startOfDay(copy);
+}
+
+function startOfMonth(d) {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+
+function shiftDurationMs(shift) {
+  if (!shift.endDate) return 0;
+  return new Date(shift.endDate) - new Date(shift.startDate);
+}
+
+function sumShifts(list) {
+  return list.reduce((total, s) => total + shiftDurationMs(s), 0);
+}
+
+function completedShiftsSince(since) {
+  return shifts.filter(s => s.endDate && new Date(s.startDate) >= since);
+}
+
+// ── Totals ────────────────────────────────────────────────────────────────────
 
 function updateTotals() {
-    const todayTotal = getTotalForDate(new Date());
-    const weekTotal = getTotalForWeek();
-    const monthTotal = getTotalForMonth();
-
-    document.getElementById('todayTotal').textContent = formatDuration(todayTotal.startDate, todayTotal.endDate);
-    document.getElementById('weekTotal').textContent = formatDuration(weekTotal.startDate, weekTotal.endDate);
-    document.getElementById('monthTotal').textContent = formatDuration(monthTotal.startDate, monthTotal.endDate);
+  const now = new Date();
+  document.getElementById('todayTotal').textContent = formatMs(sumShifts(completedShiftsSince(startOfDay(now))));
+  document.getElementById('weekTotal').textContent  = formatMs(sumShifts(completedShiftsSince(startOfWeek(now))));
+  document.getElementById('monthTotal').textContent = formatMs(sumShifts(completedShiftsSince(startOfMonth(now))));
 }
 
-function getTotalForDate(date) {
-    return shifts.filter(shift => isSameDay(shift.startDate, date) && shift.endDate)
-        .reduce((total, shift) => total + (shift.endDate - shift.startDate), 0);
+// ── Live timer ────────────────────────────────────────────────────────────────
+
+function startLiveTimer() {
+  stopLiveTimer();
+  const el = document.getElementById('liveTimer');
+  el.classList.remove('hidden');
+  liveTimerInterval = setInterval(() => {
+    const shift = shifts.find(s => s.id === activeShiftId);
+    if (!shift) return;
+    el.textContent = formatMsLong(Date.now() - new Date(shift.startDate));
+  }, 1000);
 }
 
-function getTotalForWeek() {
-    const startOfWeek = getStartOfWeek();
-    return shifts.filter(shift => shift.startDate >= startOfWeek && shift.endDate)
-        .reduce((total, shift) => total + (shift.endDate - shift.startDate), 0);
+function stopLiveTimer() {
+  clearInterval(liveTimerInterval);
+  liveTimerInterval = null;
+  const el = document.getElementById('liveTimer');
+  if (el) el.classList.add('hidden');
 }
 
-function getTotalForMonth() {
-    const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-    return shifts.filter(shift => shift.startDate >= startOfMonth && shift.endDate)
-        .reduce((total, shift) => total + (shift.endDate - shift.startDate), 0);
+// ── Render ────────────────────────────────────────────────────────────────────
+
+function render() {
+  const isActive = !!activeShiftId;
+
+  document.getElementById('clockInBtn').disabled  = isActive;
+  document.getElementById('clockOutBtn').disabled = !isActive;
+
+  const badge = document.getElementById('statusBadge');
+  badge.textContent = isActive ? 'Clocked On' : 'Clocked Off';
+  badge.className   = isActive ? 'status-badge active' : 'status-badge';
+
+  renderHistory();
+  updateTotals();
 }
 
-function formatDuration(start, end) {
-    const diff = end - start;
-    const hours = Math.floor(diff / 3600000);
-    const minutes = Math.floor((diff % 3600000) / 60000);
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+function renderHistory() {
+  const list = document.getElementById('shiftList');
+  list.innerHTML = '';
+
+  if (shifts.length === 0) {
+    list.innerHTML = '<li class="empty">No shifts recorded yet.</li>';
+    return;
+  }
+
+  shifts.forEach(shift => {
+    const isActive = shift.id === activeShiftId;
+    const start    = new Date(shift.startDate);
+    const end      = shift.endDate ? new Date(shift.endDate) : null;
+    const duration = end ? formatMs(shiftDurationMs(shift)) : '—';
+
+    const li = document.createElement('li');
+    li.className = isActive ? 'shift-item active-shift' : 'shift-item';
+    li.innerHTML = `
+      <div class="shift-row">
+        <div class="shift-times">
+          <span class="shift-date">${fmtDate(start)}</span>
+          <span class="shift-range">${fmtTime(start)} → ${end ? fmtTime(end) : '<em>in progress</em>'}</span>
+        </div>
+        <div class="shift-meta">
+          <span class="shift-duration">${duration}</span>
+          ${!isActive ? `<button class="delete-btn" onclick="deleteShift('${shift.id}')" title="Delete shift">✕</button>` : ''}
+        </div>
+      </div>
+      <input
+        type="text"
+        class="notes-input"
+        placeholder="Add notes…"
+        value="${escHtml(shift.notes)}"
+        onchange="updateNotes('${shift.id}', this.value)"
+      >
+    `;
+    list.appendChild(li);
+  });
 }
 
-function isSameDay(date1, date2) {
-    return date1.toDateString() === date2.toDateString();
+function fmtDate(d) {
+  return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-function getStartOfWeek() {
-    const today = new Date();
-    const dayOfWeek = today.getDay();
-    return new Date(today.setDate(today.getDate() - dayOfWeek));
+function fmtTime(d) {
+  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
-function updateButtons() {
-    if (currentShift) {
-        document.getElementById('clockInBtn').disabled = true;
-        document.getElementById('clockOutBtn').disabled = false;
-    } else {
-        document.getElementById('clockInBtn').disabled = false;
-        document.getElementById('clockOutBtn').disabled = true;
-    }
+function escHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+
+// ── CSV export / import ───────────────────────────────────────────────────────
 
 function exportCSV() {
-    const csvContent = "data:text/csv;charset=utf-8," + shifts.map(shift => {
-        return `${new Date(shift.startDate).toISOString()},${shift.endDate ? new Date(shift.endDate).toISOString() : ''},${shift.endDate ? (shift.endDate - shift.startDate) / 60000 : ''},${shift.notes || ''}`;
-    }).join("\n");
+  const header = 'id,start,end,duration_minutes,notes';
+  const rows = shifts.map(s => {
+    const mins = s.endDate
+      ? ((new Date(s.endDate) - new Date(s.startDate)) / 60000).toFixed(2)
+      : '';
+    const notes = `"${(s.notes || '').replace(/"/g, '""')}"`;
+    return [s.id, s.startDate, s.endDate || '', mins, notes].join(',');
+  });
 
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "shifts.csv");
-    document.body.appendChild(link);
-    link.click();
+  const blob = new Blob([[header, ...rows].join('\n')], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `shiftstamp-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function importCSV() {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.csv';
-    input.onchange = function(event) {
-        const file = event.target.files[0];
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            const content = e.target.result;
-            const rows = content.split("\n");
-            rows.forEach(row => {
-                const [start, end, duration, notes] = row.split(",");
-                if (start) {
-                    const shift = {
-                        startDate: new Date(start),
-                        endDate: end ? new Date(end) : null,
-                        notes: notes || ''
-                    };
-                    shifts.push(shift);
-                }
-            });
-            saveShifts();
-            loadShifts();
-            updateTotals();
-        };
-        reader.readAsText(file);
+  const input  = document.createElement('input');
+  input.type   = 'file';
+  input.accept = '.csv';
+  input.onchange = e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const lines      = ev.target.result.trim().split('\n');
+      const existing   = new Set(shifts.map(s => s.id));
+      const dataLines  = lines[0].startsWith('id,') ? lines.slice(1) : lines;
+      let imported     = 0;
+
+      dataLines.forEach(line => {
+        const [id, start, end, , notesRaw] = line.split(',');
+        if (!id || !start) return;
+        if (existing.has(id)) return;
+        const notes = (notesRaw || '').replace(/^"|"$/g, '').replace(/""/g, '"');
+        shifts.push({ id, startDate: start, endDate: end || null, notes });
+        imported++;
+      });
+
+      shifts.sort((a, b) => new Date(b.startDate) - new Date(a.startDate));
+      saveState();
+      render();
+      alert(`Imported ${imported} new shift${imported !== 1 ? 's' : ''}.`);
     };
-    input.click();
+    reader.readAsText(file);
+  };
+  input.click();
 }
+
+// ── PWA ───────────────────────────────────────────────────────────────────────
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js'));
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadState();
+  render();
+  if (activeShiftId) startLiveTimer();
+});
